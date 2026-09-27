@@ -2,6 +2,14 @@
 
 Reusable Google Apps Script for importing IBKR Flex cash and open positions into a fixed set of account-number tabs. The public script has no account IDs, tokens, query IDs, or account-specific currency assumptions.
 
+## Why use it
+
+This connector gives people who follow several IBKR portfolios one Google Sheet for routine cash and position checks. Configure a Flex Query for each authorised login, list its account IDs in the private config, and schedule the script to refresh the same account tabs each day. You can then build formulas or a separate dashboard around fixed ranges without signing in to Client Portal for every routine review.
+
+It can be useful for a household with separate logins, a team overseeing portfolios for several people or companies, or anyone who prefers spreadsheet-based reporting. The Flex Web Service retrieves saved reports using a token and Query ID; [IBKR says a token can be set to remain active from six hours to one year](https://www.interactivebrokers.com/docs/web-api/flex-web-service/client-portal-configuration/enable-and-create-access-token). A saved query can be reused for scheduled runs while its token remains valid. Renew the token when it expires or is replaced.
+
+For a reporting workflow, share the resulting Sheet only with viewers who need it, and keep the Flex token and private configuration with the maintainer. People reviewing the Sheet do not need your IBKR login credentials. [IBKR describes Flex Web Service as report retrieval without using those credentials in each request](https://www.interactivebrokers.com/docs/web-api/flex-web-service/client-portal-configuration). The Sheet contains financial information, so apply appropriate Google Sheets sharing permissions.
+
 ## Files
 
 - `ibkr.gs` — shareable connector code.
@@ -54,7 +62,7 @@ For each IBKR login used in `ibkrAccounts`:
 
    Set **Open Positions level of detail to Summary** if the option is offered. Select **Account ID**, not an alias in its place, so the report matches `accountIds` exactly. IBKR defines these fields in its [Open Positions](https://www.ibkrguides.com/reportingreference/reportguide/open%20positionsfq.htm) and [Cash Report](https://www.ibkrguides.com/reportingreference/reportguide/cash%20reportfq.htm) references.
 3. Under **Delivery Configuration**, select every account ID assigned to this login in your private config, choose **XML**, and set **Period: Last Business Day** for daily holdings. Save the query, then open its details and copy the displayed **Query ID** into that login's `queryId`. IBKR describes these settings in its [query creation guide](https://www.ibkrguides.com/student-trading-lab-professor/en-us/activityflex.htm).
-4. Open **Flex Queries → Flex Web Service Configuration** for that login, enable the service, choose a token lifetime that covers your scheduled runs, and select **Generate New Token**. Copy the current token into that login's `token`. IBKR notes that a new token invalidates the old one and that the default expiry may be only six hours; renew the private config when a token expires. See IBKR's [Flex Web Service setup guide](https://www.ibkrguides.com/brokerportal/performanceandstatements/flex3.htm).
+4. Open **Flex Queries → Flex Web Service Configuration** for that login, enable the service, choose a token lifetime that covers your scheduled runs (IBKR permits up to one year), and select **Generate New Token**. Copy the current token into that login's `token`. A new token invalidates the old one, and the default expiry may be only six hours; renew the private config when a token expires. See IBKR's [Flex Web Service setup guide](https://www.ibkrguides.com/brokerportal/performanceandstatements/flex3.htm) and [token lifetime reference](https://www.interactivebrokers.com/docs/web-api/flex-web-service/client-portal-configuration/enable-and-create-access-token).
 5. Test the saved query in Client Portal and check that the XML includes the configured accounts, cash rows, and any expected positions. The connector uses IBKR's [Flex Web Service v3 request flow](https://www.interactivebrokers.com/docs/web-api/api-reference/send-request) to retrieve it.
 
 Each login needs its own valid token and Query ID. Keep them in the private config only. Account IDs are fixed in that config; the connector does not add accounts discovered in the Flex report.

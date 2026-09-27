@@ -1,8 +1,9 @@
 // Copy this file to config.private.gs, replace the examples, and do not commit it.
 // Add config.private.gs as a second file in the spreadsheet's Apps Script project.
-// Each accountIds entry must match an existing spreadsheet tab exactly.
+// Each accountIds entry becomes an account tab name during setup.
 // The name field is only a label for a Flex login; it is not a tab name.
-// Create account tabs and the two raw tabs manually before the first sync.
+// Run setupConnector() before credentials are ready, or run syncAll() once
+// with completed credentials in a new, empty Google Sheet.
 function getConnectorConfig() {
   return {
     ibkrAccounts: [

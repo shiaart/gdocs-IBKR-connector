@@ -35,11 +35,19 @@ function syncAll() {
   syncIBKR();
 }
 
+// Run manually to prepare tabs before Flex credentials are available.
+// Calling it again only fills missing tabs and leaves existing data alone.
+function setupConnector() {
+  CONFIG = loadConnectorConfig();
+  initializeManagedSheets(configuredAccountIds(false));
+}
+
 function syncIBKR() {
   CONFIG = loadConnectorConfig();
   var positionRows = [];
   var cashRows = [];
-  var accountIds = configuredAccountIds();
+  var accountIds = configuredAccountIds(true);
+  autoSetupEmptySpreadsheet(accountIds);
   requireManagedSheets(accountIds);
   var accounts = CONFIG.ibkrAccounts.filter(function(account) { return account.accountIds.length; });
 
@@ -51,7 +59,8 @@ function syncIBKR() {
     var reportedIds = readReportedAccountIds(root);
     account.accountIds.forEach(function(id) {
       if (!reportedIds[id]) {
-        throw new Error(account.name + ' Flex report is missing configured account ' + id + '. No sheets were updated.');
+        throw new Error(account.name + ' Flex report is missing configured account ' + id +
+          '. No imported data was written.');
       }
     });
     positionRows = positionRows.concat(readPositions(root, account.name).filter(function(row) {
@@ -76,17 +85,20 @@ function isConfiguredAccount(account) {
     !/^REPLACE_WITH_/.test(account.queryId);
 }
 
-function configuredAccountIds() {
+function configuredAccountIds(requireCredentials) {
   var ids = {};
   var accountIds = [];
   CONFIG.ibkrAccounts.forEach(function(account) {
     if (!Array.isArray(account.accountIds)) throw new Error(account.name + ': accountIds must be an array.');
-    if (account.accountIds.length && !isConfiguredAccount(account)) {
+    if (requireCredentials && account.accountIds.length && !isConfiguredAccount(account)) {
       throw new Error(account.name + ': add a Flex token and Query ID before syncing. No sheets were updated.');
     }
     account.accountIds.forEach(function(id) {
       if (typeof id !== 'string' || !id.trim() || id !== id.trim()) {
         throw new Error(account.name + ': enter each account ID as an exact, non-empty string.');
+      }
+      if (/^(ACCOUNT_ID_|REPLACE_WITH_)/.test(id)) {
+        throw new Error(account.name + ': replace the example account ID before creating tabs.');
       }
       if (ids[id]) throw new Error('Account ' + id + ' is configured more than once.');
       ids[id] = true;
@@ -97,38 +109,108 @@ function configuredAccountIds() {
   return accountIds;
 }
 
-function requireManagedSheets(accountIds) {
-  var names = [CONFIG.positionsSheet, CONFIG.cashSheet].concat(accountIds);
+function managedSheetNames(accountIds) {
+  var names = accountIds.concat([CONFIG.positionsSheet, CONFIG.cashSheet]);
   names.reduce(function(seen, name) {
     if (seen[name]) throw new Error('Managed sheet name is configured more than once: ' + name);
     seen[name] = true;
     return seen;
   }, {});
+  return names;
+}
+
+function isBlankSheet(sheet) {
+  return sheet.getLastRow() === 0 && sheet.getLastColumn() === 0;
+}
+
+function autoSetupEmptySpreadsheet(accountIds) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheets = ss.getSheets();
+  var names = managedSheetNames(accountIds);
+  if (sheets.length === 1 && isBlankSheet(sheets[0]) &&
+      names.every(function(name) { return !ss.getSheetByName(name); })) {
+    initializeManagedSheets(accountIds);
+  }
+}
+
+function initializeManagedSheets(accountIds) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var names = managedSheetNames(accountIds);
+  var sheets = ss.getSheets();
+  var reusable = sheets.length === 1 && isBlankSheet(sheets[0]) &&
+    names.indexOf(sheets[0].getName()) === -1 ? sheets[0] : null;
+
+  accountIds.forEach(function(id) {
+    var sheet = ss.getSheetByName(id);
+    if (!sheet && reusable) {
+      sheet = reusable.setName(id);
+      reusable = null;
+    } else if (!sheet) {
+      sheet = ss.insertSheet(id);
+    }
+    ensureMinimumSheetSize(sheet, CONFIG.positionsHeaderRow + CONFIG.positionCapacity,
+      POSITION_HEADERS.length);
+    if (!isBlankSheet(sheet)) return;
+    sheet.getRange(1, 1).setValue(id).setFontSize(14).setFontWeight('bold');
+    sheet.getRange(2, 4).setValue('Cash is shown in its reported currency; no FX conversion');
+    sheet.getRange(4, 1).setValue('Cash by currency').setFontWeight('bold');
+    sheet.getRange(5, 1, 1, 3).setValues([['Currency', 'Cash', 'Settled cash']]);
+    styleAccountHeaderRow(sheet, 5, 3);
+    sheet.getRange(CONFIG.positionsHeaderRow - 2, 1, 1, 2).setValues([
+      ['Position data rows', 'A' + (CONFIG.positionsHeaderRow + 1) +
+        ':M' + (CONFIG.positionsHeaderRow + CONFIG.positionCapacity)],
+    ]);
+    sheet.getRange(CONFIG.positionsHeaderRow, 1, 1, POSITION_HEADERS.length)
+      .setValues([POSITION_HEADERS]);
+    styleAccountHeaderRow(sheet, CONFIG.positionsHeaderRow, POSITION_HEADERS.length);
+    sheet.setFrozenRows(2);
+  });
+
+  [
+    { name: CONFIG.positionsSheet, headers: POSITION_HEADERS },
+    { name: CONFIG.cashSheet, headers: CASH_HEADERS },
+  ].forEach(function(item) {
+    var sheet = ss.getSheetByName(item.name) || ss.insertSheet(item.name);
+    if (isBlankSheet(sheet)) {
+      ensureMinimumSheetSize(sheet, 1, item.headers.length);
+      sheet.getRange(1, 1, 1, item.headers.length).setValues([item.headers]);
+      styleHeaderRow(sheet, 1, item.headers.length);
+    }
+    sheet.hideSheet();
+  });
+}
+
+function requireManagedSheets(accountIds) {
+  var names = managedSheetNames(accountIds);
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var missing = names.filter(function(name) { return !ss.getSheetByName(name); });
-  if (missing.length) throw new Error('Create these tabs before syncing: ' + missing.join(', ') + '. No tabs were added.');
+  if (missing.length) throw new Error('Missing tabs: ' + missing.join(', ') +
+    '. Run setupConnector() to add them; the daily sync does not add tabs to an existing sheet.');
 }
 
 function requireManagedSheetSizes(accountIds, positionCount, cashCount) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var required = [
-    { name: CONFIG.positionsSheet, rows: positionCount + 1, columns: POSITION_HEADERS.length },
-    { name: CONFIG.cashSheet, rows: cashCount + 1, columns: CASH_HEADERS.length },
-  ];
   accountIds.forEach(function(id) {
-    required.push({
-      name: id,
-      rows: CONFIG.positionsHeaderRow + CONFIG.positionCapacity,
-      columns: POSITION_HEADERS.length,
-    });
-  });
-  required.forEach(function(item) {
-    var sheet = ss.getSheetByName(item.name);
-    if (sheet.getMaxRows() < item.rows || sheet.getMaxColumns() < item.columns) {
-      throw new Error(item.name + ' needs at least ' + item.rows + ' rows and ' +
-        item.columns + ' columns. Resize it before syncing. No sheets were updated.');
+    var sheet = ss.getSheetByName(id);
+    var minRows = CONFIG.positionsHeaderRow + CONFIG.positionCapacity;
+    if (sheet.getMaxRows() < minRows || sheet.getMaxColumns() < POSITION_HEADERS.length) {
+      throw new Error(id + ' needs at least ' + minRows + ' rows and ' +
+        POSITION_HEADERS.length + ' columns. Run setupConnector() before syncing.');
     }
   });
+  ensureMinimumSheetSize(ss.getSheetByName(CONFIG.positionsSheet), positionCount + 1,
+    POSITION_HEADERS.length);
+  ensureMinimumSheetSize(ss.getSheetByName(CONFIG.cashSheet), cashCount + 1,
+    CASH_HEADERS.length);
+}
+
+function ensureMinimumSheetSize(sheet, minRows, minColumns) {
+  if (sheet.getMaxRows() < minRows) {
+    sheet.insertRowsAfter(sheet.getMaxRows(), minRows - sheet.getMaxRows());
+  }
+  if (sheet.getMaxColumns() < minColumns) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), minColumns - sheet.getMaxColumns());
+  }
 }
 
 function readReportedAccountIds(root) {
@@ -396,7 +478,7 @@ function writeAccountSheets(accountData) {
     sheet.getRange(1, 1).setValue(accountId).setFontSize(14).setFontWeight('bold');
     sheet.getRange(1, 4).setValue('Last synced: ' +
       Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm'));
-    sheet.getRange(2, 4).setValue('A:C as reported; D:E converted using Setup rates');
+    sheet.getRange(2, 4).setValue('Cash is shown in its reported currency; no FX conversion');
 
     sheet.getRange(4, 1).setValue('Cash by currency').setFontWeight('bold');
     var summaryHeaders = ['Currency', 'Cash', 'Settled cash'];

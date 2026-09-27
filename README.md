@@ -10,21 +10,21 @@ Reusable Google Apps Script for importing IBKR Flex cash and open positions into
 
 Do not add `config.private.gs`, a token, or a query ID to a public repository. The `.gitignore` allowlist keeps only the four reviewed project files eligible for normal staging. Review any file before adding it to the allowlist; `.gitignore` does not remove files that were already committed or added with `git add -f`.
 
-## First-time setup in an empty Google Sheet
+## Start from an empty Google Sheet
 
-1. Copy `config.example.gs` to `config.private.gs`. Replace the example Flex tokens, Query IDs, and `accountIds` with your own. Add or remove login objects as needed. One Flex query may cover several account IDs if it includes them all. The `name` values such as `account1` are only labels; **the values in `accountIds` are the required tab names**.
-2. In the empty Google Sheet, rename its default `Sheet1` tab to one of your account IDs. Use the **+** button at the bottom to add one tab for every other ID in `accountIds`. Then add two more tabs named exactly `IBKR Positions` and `IBKR Cash`. For example, if `accountIds` contains `ACCOUNT_ID_1` and `ACCOUNT_ID_2`, the sheet needs those two account tabs and the two raw tabs. Replace the example IDs with real account numbers before use.
-3. Check tab sizes. With the example layout, each account tab needs at least **92 rows and 13 columns (A:M)**. In general it needs `positionsHeaderRow + positionCapacity` rows. The two raw tabs also need enough rows for the downloaded positions and cash records. Add rows manually if needed; the script does not grow sheets.
-4. Open **Extensions → Apps Script** and add both `ibkr.gs` and your private `config.private.gs` as separate script files. Keep the private file out of a public GitHub repository. If using a deployment tool, configure it to upload the private file from your machine.
-5. Run `syncAll()` once and inspect the results and execution log. If a required tab is missing or too small, the run stops with an error telling you what to fix. Once the first sync succeeds, run `installDailyTrigger()` once to schedule daily syncs.
+1. Create a new Google Sheet. Leave its single blank tab in place.
+2. Copy `config.example.gs` to `config.private.gs`. Replace `ACCOUNT_ID_1`, `ACCOUNT_ID_2`, and any other account ID examples with real account numbers. Add or remove login objects as needed. The `name` values such as `account1` are only labels; **each value in `accountIds` becomes an account tab name**. One Flex query can include several accounts available to that login.
+3. Open **Extensions → Apps Script** in that Sheet. Add `ibkr.gs` and your private `config.private.gs` as separate script files. Keep the private file out of GitHub. If using a deployment tool, configure it to upload the private file from your machine.
+4. Run `setupConnector()` once and grant Apps Script access when prompted. It needs account IDs, but it does **not** need a token or Query ID yet. On a blank spreadsheet, it renames the blank tab for the first account, creates the other account tabs, creates `IBKR Positions` and `IBKR Cash`, and writes the fixed headers. It sizes new account tabs for the configured position range. Running it again leaves existing data and tab order alone while adding any newly configured account tabs.
+5. [Create the Flex Query and token](#configure-the-ibkr-flex-query) for each login, then fill the `token` and `queryId` fields in your private config. Run `syncAll()` and inspect the results and execution log. Once that succeeds, run `installDailyTrigger()` once to schedule daily syncs.
 
-**After setup:** Every manual or scheduled sync reuses those exact tabs. It never creates a tab on the first run or on later runs, never renames a tab, and never changes tab order. New accounts require you to add their IDs to the private config and create their tabs yourself before the next sync.
+If you already filled in account IDs, tokens, and Query IDs, you can skip step 4: the first `syncAll()` automatically initializes a genuinely empty, single-tab Sheet. Later scheduled syncs only use the existing tabs. If a required tab is missing from a previously initialized Sheet, the sync stops and tells you to run `setupConnector()` explicitly. It does not silently recreate tabs on a daily run.
 
 An Apps Script daily trigger runs in Google's cloud. It cannot read a config file that exists only on your computer. The local private file is the source you keep out of Git; a copy must be installed in your private Apps Script project for automatic runs.
 
 ## Fixed layout
 
-The account tab names come only from `accountIds` in the private config. Accounts present in a Flex report but absent from `accountIds` are ignored. A missing tab, missing credentials, missing configured account in the Flex report, insufficient sheet size, more than `positionCapacity` positions, or more than `summaryCurrencyCapacity` currencies stops the sync before writing.
+The account tab names come only from `accountIds` in the private config. The setup step creates those exact tabs once; regular syncs never rename or reorder them. Accounts present in a Flex report but absent from `accountIds` are ignored. A missing tab in an initialized Sheet, missing credentials, missing configured account in the Flex report, insufficient account-tab size, more than `positionCapacity` positions, or more than `summaryCurrencyCapacity` currencies stops the sync before importing data. The two script-managed raw tabs can grow as the report grows.
 
 With the example settings, each account tab uses:
 
@@ -38,14 +38,29 @@ With the example settings, each account tab uses:
 
 The script refreshes the generated cash range and position range on each sync. It leaves the rows between them available for your own formulas and notes. The account tab's columns and fixed row ranges remain stable, but a particular currency or security can move to a different row as holdings change. Match by currency or symbol in downstream formulas instead of relying on an item's row number.
 
-`IBKR Positions` and `IBKR Cash` are raw, script-managed tabs that the connector hides after writing. Their row counts change with the report. They are also required to exist before the first sync.
+`IBKR Positions` and `IBKR Cash` are raw, script-managed tabs that setup creates and the connector hides after writing. Their row counts can grow with the report.
 
-## Flex query
+## Configure the IBKR Flex Query
 
-Create an Activity Flex Query in XML format with **Open Positions** and **Cash Report** sections. Cash Report needs Account ID, Currency, Ending Cash, and Ending Settled Cash. Set the report period to Last Business Day if you want daily holdings. Provide each login's token and Query ID in the private config.
+For each IBKR login used in `ibkrAccounts`:
+
+1. In Client Portal, go to **Reporting / Performance & Reports → Flex Queries**. Create an **Activity Flex Query** (not a Trade Confirmation query). In its **Sections**, add **Open Positions** and **Cash Report**. IBKR's [Activity Flex Query guide](https://www.ibkrguides.com/student-trading-lab-professor/en-us/activityflex.htm) shows the section and field selection flow.
+2. Select these fields. The connector reads these values from the XML; extra fields are unnecessary:
+
+   | Section | Fields to select |
+   |---|---|
+   | Open Positions | Account ID, Currency, Asset Class, Symbol, Description, Quantity, Mark Price, Position Value, Cost Basis Price, FIFO Unrealized PNL |
+   | Cash Report | Account ID, Currency, Ending Cash, Ending Settled Cash |
+
+   Set **Open Positions level of detail to Summary** if the option is offered. Select **Account ID**, not an alias in its place, so the report matches `accountIds` exactly. IBKR defines these fields in its [Open Positions](https://www.ibkrguides.com/reportingreference/reportguide/open%20positionsfq.htm) and [Cash Report](https://www.ibkrguides.com/reportingreference/reportguide/cash%20reportfq.htm) references.
+3. Under **Delivery Configuration**, select every account ID assigned to this login in your private config, choose **XML**, and set **Period: Last Business Day** for daily holdings. Save the query, then open its details and copy the displayed **Query ID** into that login's `queryId`. IBKR describes these settings in its [query creation guide](https://www.ibkrguides.com/student-trading-lab-professor/en-us/activityflex.htm).
+4. Open **Flex Queries → Flex Web Service Configuration** for that login, enable the service, choose a token lifetime that covers your scheduled runs, and select **Generate New Token**. Copy the current token into that login's `token`. IBKR notes that a new token invalidates the old one and that the default expiry may be only six hours; renew the private config when a token expires. See IBKR's [Flex Web Service setup guide](https://www.ibkrguides.com/brokerportal/performanceandstatements/flex3.htm).
+5. Test the saved query in Client Portal and check that the XML includes the configured accounts, cash rows, and any expected positions. The connector uses IBKR's [Flex Web Service v3 request flow](https://www.interactivebrokers.com/docs/web-api/api-reference/send-request) to retrieve it.
+
+Each login needs its own valid token and Query ID. Keep them in the private config only. Account IDs are fixed in that config; the connector does not add accounts discovered in the Flex report.
 
 Some Cash Reports provide only `BASE_SUMMARY`. For those accounts, set the account ID's actual base currency in `baseSummaryCurrencyByAccount`. When detailed currencies are present, the connector uses those instead of double counting the summary. The connector maps the IBKR cash label `RUS` to `RUB` in the account cash table; the raw tab keeps the reported label.
 
 ## Reliability
 
-The connector checks the fixed account list, required tabs, sheet size, and row capacities before writing. Check the Apps Script execution result and sync time when relying on a daily update. Flex delivery, permissions, or an unexpected Sheets write error can still interrupt a run; the connector does not provide an atomic transaction across all tabs.
+The connector checks the fixed account list, required tabs, sheet size, and row capacities before importing data. `setupConnector()` intentionally creates missing tabs; `syncAll()` does this automatically only for a genuinely empty, single-tab Sheet. Check the Apps Script execution result and sync time when relying on a daily update. Flex delivery, permissions, or an unexpected Sheets write error can still interrupt a run; the connector does not provide an atomic transaction across all tabs.

@@ -1,0 +1,7 @@
+# Publish only these reviewed files. All local config, notes, previews, and
+# future files stay untracked until explicitly added to this allowlist.
+*
+!/.gitignore
+!/README.md
+!/ibkr.gs
+!/config.example.gs
